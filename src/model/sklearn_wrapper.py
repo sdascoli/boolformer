@@ -4,13 +4,16 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
-import math, time, copy
+import math
+import copy
+import time as _time
 import numpy as np
 import torch
 from collections import defaultdict
 from symbolicregression.metrics import compute_metrics
 from sklearn.base import BaseEstimator
 import symbolicregression.model.utils_wrapper as utils_wrapper
+from symbolicregression.model.mixins import PredictionIntegrationMixin
 import traceback
 from sklearn import feature_selection 
 from symbolicregression.envs.generators import integrate_ode
@@ -24,28 +27,35 @@ def exchange_node_values(tree, dico):
         new_tree.replace_node_value(old, new)
     return new_tree
 
-class SymbolicTransformerRegressor(BaseEstimator):
+class SymbolicTransformerRegressor(BaseEstimator, PredictionIntegrationMixin):
 
     def __init__(self,
                 model=None,
+                from_pretrained=False,
                 max_input_points=10000,
-                max_number_bags=-1,
-                stop_refinement_after=1,
-                n_trees_to_refine=1,
-                rescale=False,
-                average_trajectories=False,
-                params=None
+                rescale=True,
+                params=None,
+                model_kwargs={},
                 ):
 
         self.max_input_points = max_input_points
-        self.max_number_bags = max_number_bags
         self.model = model
-        self.stop_refinement_after = stop_refinement_after
-        self.n_trees_to_refine = n_trees_to_refine
         self.rescale = rescale
         self.params = params
-        self.average_trajectories = average_trajectories
-        self.model.average_trajectories = average_trajectories
+        if from_pretrained:
+            self.load_pretrained()
+        for kwarg, val in model_kwargs.items():
+            setattr(self.model, kwarg, val)
+
+    def load_pretrained(self):
+        import gdown
+        model_path = "odeformer.pt" 
+        if not os.path.exists(model_path):
+            url = "https://drive.google.com/uc?id=18CwlutaFF_tAOObsIukrKVZMPmsjwNwF"
+            gdown.download(url, model_path, quiet=False)
+        model = torch.load(model_path)
+        print("Loaded pretrained model")
+        self.model = model
 
     def set_args(self, args={}):
         for arg, val in args.items():
@@ -58,45 +68,49 @@ class SymbolicTransformerRegressor(BaseEstimator):
         trajectories,
         sort_candidates=True,
         sort_metric="snmse",
-        average_trajectories=None,
         rescale=None,
         verbose=False,
     ):
-        self.start_fit = time.time()
 
-        if not average_trajectories: average_trajectories = self.average_trajectories
-        self.model.average_trajectories = average_trajectories
         if not rescale: rescale = self.rescale
         self.rescale = rescale
 
-        assert not (self.average_trajectories and self.rescale), "Cannot average trajectories and rescale at the same time"
-        assert not (self.params is None and self.rescale), "Need to know the time and feature range to rescale to"
+        assert not (self.model.average_trajectories and self.rescale), "Cannot average trajectories and rescale at the same time"
+        #assert not (self.params is None and self.rescale), "Need to know the time and feature range to rescale to"
+        if not self.params:
+            feature_scale = 1
+            time_range = 10
+        else:
+            feature_scale = self.params.init_scale
+            time_range = self.params.time_range
 
         if not isinstance(times, list):
             times = [times]
             trajectories = [trajectories]
         n_datasets = len(times)
-
-        # take finite differences
-        if self.params:
-            if self.params.differentiate:
-                for i in range(len(times)):
-                    trajectories[i], times[i] = np.diff(trajectories[i], axis=0), times[i][1:]
         
-        scaler = utils_wrapper.Scaler(time_range=[1, self.params.time_range], feature_scale=self.params.init_scale) if self.rescale else None 
+        # rescale time and features
+        scaler = utils_wrapper.Scaler(time_range=[1, time_range], feature_scale=feature_scale) if self.rescale else None 
         scale_params = {}
         if scaler is not None:
             scaled_times = []
             scaled_trajectories = []
-            for i, (time_, trajectory) in enumerate(zip(times, trajectories)):
-                scaled_time, scaled_trajectory = scaler.fit_transform(time_, trajectory)
+            for i, (time, trajectory) in enumerate(zip(times, trajectories)):
+                scaled_time, scaled_trajectory = scaler.fit_transform(time, trajectory)
                 scaled_times.append(scaled_time)
                 scaled_trajectories.append(scaled_trajectory)
                 scale_params[i]=scaler.get_params()
         else:
-            scaled_times = times
-            scaled_trajectories = trajectories
+            scaled_times = times.copy()
+            scaled_trajectories = trajectories.copy()
 
+        # permute trajectories so that when bagging the model doesn't get chunks
+        for i, (scaled_time, scaled_trajectory) in enumerate(zip(scaled_times, scaled_trajectories)):
+            permutation = np.random.permutation(len(scaled_time))
+            scaled_times[i] = scaled_time[permutation]
+            scaled_trajectories[i] = scaled_trajectory[permutation]
+
+        # split into bags of size max_input_points
         inputs, inputs_ids = [], []
         for seq_id in range(len(scaled_times)):
             for seq_l in range(len(scaled_times[seq_id])):
@@ -110,14 +124,10 @@ class SymbolicTransformerRegressor(BaseEstimator):
             # inputs.append([])
             # inputs_ids.append(seq_id)
 
-        if self.max_number_bags>0:
-            inputs = inputs[:self.max_number_bags]
-            inputs_ids = inputs_ids[:self.max_number_bags]
-
         # Forward transformer
-        forward_time=time.time()
+        forward_time=_time.time()
         outputs = self.model(inputs)  ##Forward transformer: returns predicted functions
-        if verbose: print("Finished forward in {} secs".format(time.time()-forward_time))
+        if verbose: print("Finished forward in {} secs".format(_time.time()-forward_time))
 
         all_candidates = defaultdict(list)
         assert len(inputs) == len(outputs), "Problem with inputs and outputs"
@@ -127,27 +137,27 @@ class SymbolicTransformerRegressor(BaseEstimator):
             if not candidates: all_candidates[input_id].append(None)
             for candidate in candidates:
                 if scaler is not None:
-                    candidate = scaler.rescale_function(self.model.env, candidate, *scale_params[input_id])                    
+                    candidate = scaler.rescale_function(self.model.env, candidate, *scale_params[input_id])   
+                    candidate = self.model.env.simplifier.simplify_tree(candidate)
                 all_candidates[input_id].append(candidate)
         #assert len(all_candidates.keys())==n_datasets
-
+    
         if sort_candidates:
             for input_id in all_candidates.keys():
-                all_candidates[input_id] = self.sort_candidates(scaled_times[input_id], scaled_trajectories[input_id], all_candidates[input_id], metric=sort_metric)
-            
-        self.trees = all_candidates
+                all_candidates[input_id] = self.sort_candidates(times[input_id], trajectories[input_id], all_candidates[input_id], metric=sort_metric, verbose=verbose)
 
         return all_candidates
 
     @torch.no_grad()
     def evaluate_tree(self, tree, times, trajectory, metric):
         earliest = np.argmin(times)
-        pred_trajectory = self.predict(times, trajectory[earliest], tree=tree)
+        try: pred_trajectory = self.integrate_prediction(times, trajectory[earliest], prediction=tree)
+        except: return np.nan
         metrics = compute_metrics(pred_trajectory, trajectory, predicted_tree=tree, metrics=metric)
         return metrics[metric][0]
 
     @torch.no_grad()
-    def sort_candidates(self, times, trajectory, candidates, metric="snmse"):
+    def sort_candidates(self, times, trajectory, candidates, metric="snmse", verbose=False):
         if "r2" in metric: 
             descending = True
         else: 
@@ -159,22 +169,15 @@ class SymbolicTransformerRegressor(BaseEstimator):
                 score = -np.infty if descending else np.infty
             scores.append(score)
         sorted_idx = np.argsort(scores)  
-        if descending: sorted_idx= reversed(sorted_idx)
+
+        if descending: sorted_idx= list(reversed(sorted_idx))
         candidates = [candidates[i] for i in sorted_idx]
 
+        scores = [scores[i] for i in sorted_idx]
+
+        if verbose: 
+            print(scores, candidates)
+            for score, candidate in zip(scores, candidates):
+                print(f'{score}:{candidate}')
+
         return candidates
-
-    @torch.no_grad()
-    def predict(self, times, y0, tree=None):   
-
-        if tree is None:
-            return None
-
-        # integrate the ODE
-        if self.params:
-            ode_integrator = self.params.ode_integrator
-        else:
-            ode_integrator = "solve_ivp"
-        trajectory = integrate_ode(y0, times, tree, ode_integrator=ode_integrator)
-        
-        return trajectory

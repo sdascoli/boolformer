@@ -155,6 +155,10 @@ def get_parser():
                         help="Length penalty, values < 1.0 favor shorter sentences, while values > 1.0 favor longer ones.")
     parser.add_argument("--beam_early_stopping", type=bool_flag, default=True,
                         help="Early stopping, stop as soon as we have `beam_size` hypotheses, although longer ones may have better scores.")
+    parser.add_argument("--beam_type", type=str, default="search", 
+                        help="Beam search or sampling")
+    parser.add_argument("--beam_temperature", type=float, default=0.1, 
+                        help="Beam temperature in case of sampling")
 
     # reload pretrained model / checkpoint
     parser.add_argument("--reload_model", type=str, default="",

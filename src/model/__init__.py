@@ -11,6 +11,7 @@ import os
 import torch
 from .embedders import LinearPointEmbedder
 from .transformer import TransformerModel
+from .model_wrapper import Boolformer
 import torch.nn as nn
 
 logger = getLogger()

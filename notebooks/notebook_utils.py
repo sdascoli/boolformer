@@ -177,46 +177,60 @@ def read_run(path):
     args.output_dir = Path(path)
     return run
     
-def load_run(args, new_args={}, epoch=None):
+def load_run(params, new_params={}, epoch=None):
     
-    #try: del src
+    #try: del boolformer
     #except: pass
     #path = '/private/home/sdascoli/recur/src'
 
-    final_args = args
-    for arg, val in new_args.items():
-        setattr(final_args,arg,val)
-    final_args.multi_gpu = False
+    final_params = params
+    for arg, val in new_params.items():
+        setattr(final_params,arg,val)
+    final_params.multi_gpu = False
         
-    #path = final_args.dump_path+'/src'
+    #path = final_params.dump_path+'/src'
     #src = import_file(path)
     sys.path.append(os.path.join(BASE_PATH, 'boolean'))
     import src
 
     print(src)
-    from src.model import build_modules
+    from src.model import build_modules, Boolformer
     from src.envs import ENVS, build_env
     from src.trainer import Trainer
     from src.evaluator import Evaluator, idx_to_infix, calculate_error
     from src.envs.generators import RandomRecurrence
     
-    env = build_env(final_args)
-    modules = build_modules(env, final_args)
+    env = build_env(final_params)
+    modules = build_modules(env, final_params)
         
-    trainer = Trainer(modules, env, final_args)
+    trainer = Trainer(modules, env, final_params)
     evaluator = Evaluator(trainer)
     
     if epoch is not None:
         print(f"Reloading epoch {epoch}")
-        checkpoint_path = os.path.join(final_args.dump_path,f'periodic-{epoch}.pth')
+        checkpoint_path = os.path.join(final_params.dump_path,f'periodic-{epoch}.pth')
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         new_checkpoint = {}
         for k, module in modules.items():
             weights = {k.partition('.')[2]:v for k,v in checkpoint[k].items()}
             module.load_state_dict(weights)
             module.eval()
+
+    embedder = modules["embedder"]
+    encoder = modules["encoder"]
+    decoder = modules["decoder"]
+    embedder.eval()
+    encoder.eval()
+    decoder.eval()
+
+    boolformer = Boolformer(
+        env=env,
+        embedder=embedder,
+        encoder=encoder,
+        decoder=decoder,
+    )
     
-    return env, modules, trainer, evaluator
+    return env, modules, trainer, evaluator, boolformer
 
 def eval_run(run, new_args=None):
     
@@ -662,22 +676,25 @@ def run_benchmark(env, modules, verbose=True, network_size=16, stop_at=-1,  beam
         results_file = os.path.join(results_method_path, "results_network_" + str(network_id) + ".tsv") 
         rslt_df.to_csv(results_file, index=False, sep="\t", float_format='%.2f')
 
-def run_drug_discovery(env, modules, problem="TOX", num_points=500, num_test_points=500, num_features=None, beam_size=10, verbose=True, balance=True):
+def run_drug_discovery(model, data_path='.', problem="TOX", num_points=500, num_test_points=500, num_features=None, beam_size=10, verbose=True, balance=True):
+
+    env = model.env
 
     # read data
     np.random.seed()
     if problem=="BBB":
-        df = pd.read_csv('BBBP_MACCS.csv')
+        dataset_name = 'BBBP_MACCS.csv'
     elif problem=="BBB2":
-        df = pd.read_csv('BBB_ecfp4.csv')
+        dataset_name = 'BBB_ecfp4.csv'
     elif problem=="HIV":
-        df = pd.read_csv('HIV_MACCS.csv')
+        dataset_name = 'HIV_MACCS.csv'
     elif problem=="HIV2":
-        df = pd.read_csv('HIV_ecfp4.csv')
+        dataset_name = 'HIV_ecfp4.csv'
     elif problem=="TOX":
-        df = pd.read_csv('TOX_MACCS.csv')
+        dataset_name = 'TOX_MACCS.csv'
     elif problem=="TOX2":
-        df = pd.read_csv('TOX_ecfp4.csv')
+        dataset_name = 'TOX_ecfp4.csv'
+    df = pd.read_csv(os.path.join(data_path, dataset_name))
     df = df.drop('smiles', axis=1)
 
     #num_total = num_points + num_test_points
@@ -728,7 +745,7 @@ def run_drug_discovery(env, modules, problem="TOX", num_points=500, num_test_poi
 
     inputs, val_inputs = inputs[:,:num_features], val_inputs[:,:num_features]
 
-    pred_trees, error_arr, complexity_arr = predict(env, modules, inputs, outputs, verbose=False, beam_size=beam_size, sort_by='error')
+    pred_trees, error_arr, complexity_arr = model.predict(inputs, outputs, verbose=False, beam_size=beam_size, sort_by='error')
     pred_tree = pred_trees[0]
     preds = pred_tree.val(val_inputs)
     targets = val_outputs
@@ -744,12 +761,17 @@ def run_drug_discovery(env, modules, problem="TOX", num_points=500, num_test_poi
     if verbose:
         print(f"{acc:.3f} & {f1:.3f} & {precision:.3f} & {recall:.3f}")
         display(env.simplifier.get_simple_infix(pred_trees[0], simplify_form='basic'))
-        print(tree_to_latex(pred_tree))
+        fancy_tree = tree_to_latex(pred_tree)
+        fancy_tree = format_drug_discovery(fancy_tree, key_path = os.path.join(data_path, 'Key_MACCS.csv'), problem=problem)
+        print(fancy_tree)
 
     return accs, f1s, pred_tree
 
 def tree_to_latex(tree, problem=None):
     bool_text = tree.forest_prefix()
+    return bool_text
+
+def format_drug_discovery(bool_text, key_path, problem=None):
 
     if problem == "BBBP":
         bool_text = bool_text.replace("y_0", "\\text{Can pass the BBB}")
@@ -761,7 +783,7 @@ def tree_to_latex(tree, problem=None):
         pass
     bits = re.findall(r'bit\d+', bool_text)
 
-    df1 = pd.read_csv("Key_MACCS.csv",header=0) 
+    df1 = pd.read_csv(key_path, header=0) 
     df1.head()
 
     for bit in bits:
