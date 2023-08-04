@@ -676,7 +676,8 @@ def run_benchmark(env, modules, verbose=True, network_size=16, stop_at=-1,  beam
         results_file = os.path.join(results_method_path, "results_network_" + str(network_id) + ".tsv") 
         rslt_df.to_csv(results_file, index=False, sep="\t", float_format='%.2f')
 
-def run_drug_discovery(model, data_path='.', problem="TOX", num_points=500, num_test_points=500, num_features=None, beam_size=10, verbose=True, balance=True):
+def run_drug_discovery(model, data_path='.', problem="TOX", num_points=500, num_test_points=500, 
+                       num_features=None, beam_size=10, verbose=True, balance=True, usr_set=None):
 
     env = model.env
 
@@ -694,6 +695,9 @@ def run_drug_discovery(model, data_path='.', problem="TOX", num_points=500, num_
         dataset_name = 'TOX_MACCS.csv'
     elif problem=="TOX2":
         dataset_name = 'TOX_ecfp4.csv'
+    elif problem == "other":
+        dataset_name = usr_set
+
     df = pd.read_csv(os.path.join(data_path, dataset_name))
     df = df.drop('smiles', axis=1)
 
@@ -762,7 +766,7 @@ def run_drug_discovery(model, data_path='.', problem="TOX", num_points=500, num_
         print(f"{acc:.3f} & {f1:.3f} & {precision:.3f} & {recall:.3f}")
         display(env.simplifier.get_simple_infix(pred_trees[0], simplify_form='basic'))
         fancy_tree = tree_to_latex(pred_tree)
-        fancy_tree = format_drug_discovery(fancy_tree, key_path = os.path.join(data_path, 'Key_MACCS.csv'), problem=problem)
+        fancy_tree = format_drug_discovery(fancy_tree, key_path = os.path.join(data_path, 'key_maccs.csv'), problem=problem)
         print(fancy_tree)
 
     return accs, f1s, pred_tree
