@@ -52,7 +52,9 @@ for pred_tree in pred_trees:
 To launch a model training with additional arguments (arg1,val1), (arg2,val2):
 ```python train.py --arg1 val1 --arg2 --val2```
 
-All hyper-parameters related to training are specified in ```parsers.py```, and those related to the environment are in ```envs/environment.py```.
+All hyper-parameters related to training are specified in ```train.py```, and those related to the environment are in ```envs/environment.py```.
+
+To retrain the models of the paper, use the scripts in the ```scripts``` folder.
 
 ## Citation
 
