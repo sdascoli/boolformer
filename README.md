@@ -1,11 +1,6 @@
-[![PyPI](https://img.shields.io/pypi/v/boolformer.svg)](
-https://pypi.org/project/boolformer/)
-[![Colab](https://img.shields.io/badge/colab-notebook-yellow)](https://colab.research.google.com/github/sdascoli/boolformer/blob/main/Boolformer_demo.ipynb)
-
-
 # Boolformer: symbolic regression of Boolean functions with transformers
 
-This repository contains code for the paper [Boolformer: symbolic regression of Boolean functions with transformers](https://arxiv.org/pdf/2309.12207.pdf).
+This repository contains code for the paper Boolformer: symbolic regression of Boolean functions with transformers.
 
 ## Installation
 This package is installable via pip:
@@ -14,9 +9,7 @@ This package is installable via pip:
 
 ## Demo 
 
-We include a small notebook that loads a pre-trained model you can play with here:
-
-[![Colab](https://img.shields.io/badge/colab-notebook-yellow)](https://colab.research.google.com/github/sdascoli/boolformer/blob/main/Boolformer_demo.ipynb)
+We include a small notebook that loads a pre-trained model you can play with: `Boolformer_demo.ipynb`.
 
 ## Usage
 
@@ -55,21 +48,3 @@ To launch a model training with additional arguments (arg1,val1), (arg2,val2):
 All hyper-parameters related to training are specified in ```train.py```, and those related to the environment are in ```envs/environment.py```.
 
 To retrain the models of the paper, use the scripts in the ```scripts``` folder.
-
-## Citation
-
-If you want to reuse this material, please considering citing the following:
-```
-@misc{dascoli2023boolformer,
-      title={Boolformer: Symbolic Regression of Logic Functions with Transformers}, 
-      author={Stéphane d'Ascoli and Samy Bengio and Josh Susskind and Emmanuel Abbé},
-      year={2023},
-      eprint={2309.12207},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
-}
-```
-
-## License
-
-This repository is licensed under MIT licence.
