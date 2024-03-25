@@ -113,7 +113,7 @@ class Boolformer(nn.Module):
                 #pred_tree.to_arbitrary_fan_in()
                 pred_tree.simplify()
                 pred_trees.append(pred_tree)
-                pred = pred_tree(inputs[0]).flatten()
+                pred = pred_tree(inputs[problem_idx]).flatten()
                 true = outputs[problem_idx]
                 error = 1.-sum(pred==true)/len(pred)
                 errors.append(error)
